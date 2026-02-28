@@ -1,0 +1,6 @@
+venv/
+memory/history.json
+.env
+__pycache__/
+*.pyc
+.DS_Store
