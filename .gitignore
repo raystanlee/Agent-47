@@ -4,3 +4,5 @@ memory/history.json
 __pycache__/
 *.pyc
 .DS_Store
+mcp_server/dynamic_tools/*.py
+mcp_server/dynamic_tools/*.json
