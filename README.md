@@ -12,6 +12,8 @@ You tell it what to do in plain English and it figures out the steps. Things lik
 - "Show me what's in the reports folder"
 - "Read my README, check git diff, rewrite it, and push to GitHub"
 - "What is in this image?" ← it will write a vision tool if it doesn't have one
+- "Search GitHub for issues in my repo" ← talks to GitHub directly
+- "Search the web for X" ← uses Brave Search
 
 If it needs a capability it doesn't have yet, it writes the tool itself, registers it, and uses it — all in the same turn. Those tools are saved to disk and available on every future run.
 
@@ -19,12 +21,22 @@ If it needs a capability it doesn't have yet, it writes the tool itself, registe
 
 The agent uses Claude as the brain (planner and orchestrator). You give it an instruction, Claude decides which tools to call and in what order, and Python executes the actual operations. Claude never touches your file system or GitHub directly — it just plans, your code acts.
 
+<<<<<<< HEAD
 Tools are served over **MCP (Model Context Protocol)** — an open standard that separates your agent logic from your tool layer. The agent now connects to **two MCP servers simultaneously**:
 
 1. **Local stdio server** → file management, git status/diff, reading and writing files
 2. **GitHub remote server** → GitHub's official MCP server over HTTP/SSE (repos, issues, PRs, code search, etc.)
 
 Claude receives tools from both servers as one unified list. Each tool is prefixed with its server name (`local__` or `github__`) so there are no collisions. The agent resolves the prefix back to the real tool name when calling the correct server.
+=======
+Tools are served over **MCP (Model Context Protocol)** — an open standard that separates your agent logic from your tool layer. The agent connects to **multiple MCP servers simultaneously**:
+
+- **Local server** — file ops, dynamic tool creation, git status/diff, image analysis
+- **GitHub MCP server** — read/write issues, PRs, files, branches, search code, and more
+- **Brave Search MCP server** — web search, news, images, video, local search
+
+This means you can ask it to do things across your local machine and the internet in the same turn.
+>>>>>>> 37b4f62 (Add multi-server MCP, GitHub + Brave integration, git tools — committed by Agent 47)
 
 ### The self-extension loop
 
@@ -83,7 +95,12 @@ pip install -r requirements.txt
 Create a `.env` file in the project root:
 ```
 ANTHROPIC_API_KEY=sk-ant-...
+<<<<<<< HEAD
 GITHUB_TOKEN=ghp_...
+=======
+GITHUB_PERSONAL_ACCESS_TOKEN=ghp_...
+BRAVE_API_KEY=BSA...
+>>>>>>> 37b4f62 (Add multi-server MCP, GitHub + Brave integration, git tools — committed by Agent 47)
 ```
 
 The GitHub token needs the scopes required by GitHub's MCP server (repo access, etc.).
@@ -115,6 +132,7 @@ python main.py
 
 ```
 Agent 47/
+<<<<<<< HEAD
 ├── main.py               # Entry point
 ├── config.py             # Settings, safe roots, and system prompt
 ├── agent/
@@ -122,6 +140,15 @@ Agent 47/
 │   └── pretty.py         # Coloured terminal output
 ├── mcp_server/
 │   ├── server.py         # The local MCP server — exposes all tools
+=======
+├── main.py               # Entry point — connects to all MCP servers
+├── config.py             # Settings and system prompt
+├── agent/
+│   ├── loop.py           # The agentic loop (multi-server MCP)
+│   └── pretty.py         # Coloured terminal output
+├── mcp_server/
+│   ├── server.py         # Local MCP server — exposes file + git + vision tools
+>>>>>>> 37b4f62 (Add multi-server MCP, GitHub + Brave integration, git tools — committed by Agent 47)
 │   ├── tool_store.py     # Saves/loads dynamic tools to disk
 │   └── dynamic_tools/    # Agent-created tools live here (auto-generated)
 ├── tools/
@@ -163,8 +190,12 @@ Plus everything from GitHub's MCP server — repos, issues, PRs, code search, an
 - Agent-created tools are saved in `mcp_server/dynamic_tools/` — one `.py` + one `.json` per tool
 - You can ask the agent to delete broken or duplicate tools and it will clean them up itself
 - Run `clear history` inside the session to reset memory
+<<<<<<< HEAD
 - The GitHub MCP connection uses `streamablehttp_client` from MCP 1.26.0 — make sure your dependencies are up to date
 
 ---
 
 *Committed by Agent 47*
+=======
+- GitHub and Brave tools are only available if you provide the relevant API keys in `.env`
+>>>>>>> 37b4f62 (Add multi-server MCP, GitHub + Brave integration, git tools — committed by Agent 47)

@@ -3,7 +3,7 @@
 # Entry point. Run: python main.py
 # ─────────────────────────────────────────────────────────
 
-from config import SAFE_ROOT, API_KEY
+from config import SAFE_ROOTS, API_KEY
 from safety.sandbox import ensure_workspace_exists
 from memory.history import load_history, clear_history
 from agent.loop import run
@@ -55,7 +55,7 @@ def main():
         return
 
     ensure_workspace_exists()
-    print(f"📂 Workspace: {SAFE_ROOT}")
+    print(f"📂 Workspace: {SAFE_ROOTS}")
     print("💡 Commands: 'quit' to exit | 'clear history' to reset | 'tools' to list tools\n")
     print_separator()
 

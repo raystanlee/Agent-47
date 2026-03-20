@@ -13,34 +13,58 @@
 #   Then we check: does this resolved path START with our safe root?
 #   If not → blocked, no matter how the agent tried to get there.
 # ─────────────────────────────────────────────────────────
+# safety/sandbox.py
+# ─────────────────────────────────────────────────────────
+# Now supports multiple safe roots.
+# A path is allowed if it falls under ANY of the SAFE_ROOTS.
+# ─────────────────────────────────────────────────────────
 
 from pathlib import Path
-from config import SAFE_ROOT
+from config import SAFE_ROOTS
 
 
 def safe_path(relative: str) -> Path:
     """
-    Takes a relative path string from Claude (e.g. "reports/q1")
-    and returns a fully resolved absolute Path — but ONLY if it
-    stays inside SAFE_ROOT. Raises an exception otherwise.
-    """
-    # Join with the safe root, then resolve to absolute real path
-    resolved = (SAFE_ROOT / relative).resolve()
+    Resolve a path string and verify it sits under one of the
+    allowed roots. Raises PermissionError if not.
 
-    try:
-        # This line raises ValueError if resolved is NOT under SAFE_ROOT
-        resolved.relative_to(SAFE_ROOT.resolve())
-    except ValueError:
+    Accepts either:
+      - A relative path like "README.md" (resolved against each root)
+      - An absolute path like "/Users/ray/Agent 47/README.md"
+    """
+    candidate = Path(relative).expanduser()
+
+    # If absolute, check it directly against all roots
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+        for root in SAFE_ROOTS:
+            try:
+                resolved.relative_to(root)
+                return resolved
+            except ValueError:
+                continue
         raise PermissionError(
-            f"🚫 Blocked: '{relative}' resolves outside the safe workspace.\n"
-            f"   Resolved to: {resolved}\n"
-            f"   Safe root:   {SAFE_ROOT}"
+            f"🚫 Blocked: '{relative}' is outside all allowed roots.\n"
+            f"   Allowed: {[str(r) for r in SAFE_ROOTS]}"
         )
 
-    return resolved
+    # If relative, try resolving under each root
+    for root in SAFE_ROOTS:
+        resolved = (root / relative).resolve()
+        try:
+            resolved.relative_to(root)
+            return resolved
+        except ValueError:
+            continue
+
+    raise PermissionError(
+        f"🚫 Blocked: '{relative}' could not be resolved under any allowed root.\n"
+        f"   Allowed: {[str(r) for r in SAFE_ROOTS]}"
+    )
 
 
 def ensure_workspace_exists():
-    """Create the workspace folder if it doesn't exist yet."""
-    SAFE_ROOT.mkdir(parents=True, exist_ok=True)
-    print(f"📂 Workspace ready: {SAFE_ROOT}")
+    """Create all workspace roots if they don't exist."""
+    for root in SAFE_ROOTS:
+        root.mkdir(parents=True, exist_ok=True)
+    print(f"📂 Workspaces ready: {[str(r) for r in SAFE_ROOTS]}")

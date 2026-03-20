@@ -1,7 +1,7 @@
 # mcp_server/server.py
 # ─────────────────────────────────────────────────────────
 # The MCP server.
-# Now includes two new meta-tools:
+# Includes two meta-tools:
 #   list_dynamic_tools  → show all runtime-created tools
 #   delete_tool         → remove a dynamic tool from memory + disk
 # ─────────────────────────────────────────────────────────
@@ -14,6 +14,7 @@ from mcp import types
 from tools.handlers import (
     list_files, delete_file, delete_folder_contents,
     create_folder, move_file, rename_file, find_files, open_file,
+    git_status, git_diff, git_diff_stat,
 )
 from mcp_server.tool_store import (
     save_tool, load_all_tools,
@@ -30,6 +31,7 @@ STATIC_HANDLERS = {
     "rename_file":            rename_file,
     "find_files":             find_files,
     "open_file":              open_file,
+    "git_diff_stat": git_diff_stat,
 }
 
 # Populated at startup from disk, and grows as create_tool is called
@@ -147,6 +149,64 @@ async def list_tools() -> list[types.Tool]:
             }
         ),
 
+        types.Tool(
+            name="read_file",
+            description="Read and return the full text contents of a file.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string", "description": "Absolute or relative path to the file."}
+                },
+                "required": ["file_path"]
+            }
+        ),
+        types.Tool(
+            name="write_file",
+            description="Write content to a file. Creates the file if it doesn't exist, overwrites if it does.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string", "description": "Absolute or relative path to the file."},
+                    "content":   {"type": "string", "description": "Full content to write to the file."}
+                },
+                "required": ["file_path", "content"]
+            }
+        ),
+        types.Tool(
+            name="git_status",
+            description="Run git status in a repository folder to see changed, staged, and untracked files.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo_path": {"type": "string", "description": "Absolute or relative path to the git repo root."}
+                },
+                "required": ["repo_path"]
+            }
+        ),
+        types.Tool(
+            name="git_diff",
+            description="Show git diff for a repository. Use staged=true to see staged changes, false for unstaged.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo_path": {"type": "string", "description": "Absolute or relative path to the git repo root."},
+                    "staged":    {"type": "boolean", "description": "If true, shows staged diff. Default false.", "default": False}
+                },
+                "required": ["repo_path"]
+            }
+        ),
+        types.Tool(
+            name="git_diff_stat",
+            description="Run git diff --stat to get a compact summary of what changed — filenames and line counts only. Use this before git_diff to decide which files actually need a full diff.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo_path": {"type": "string", "description": "Absolute or relative path to the git repo root."}
+                },
+                "required": ["repo_path"]
+            }
+        ),
+
         # ── Meta-tools ────────────────────────────────────
         types.Tool(
             name="create_tool",
@@ -193,7 +253,7 @@ async def list_tools() -> list[types.Tool]:
             ),
             inputSchema={
                 "type": "object",
-                "properties": {},   # no arguments needed
+                "properties": {},
                 "required": []
             }
         ),
@@ -272,8 +332,6 @@ async def call_tool(tool_name: str, arguments: dict) -> list[types.TextContent]:
 
     # ── list_dynamic_tools ────────────────────────────────
     if tool_name == "list_dynamic_tools":
-        # CONCEPT: We read from disk (not just memory) so the list
-        # is accurate even if something was added externally.
         names = list_saved_tool_names()
         if not names:
             return [types.TextContent(type="text", text="No dynamic tools exist yet.")]
@@ -284,28 +342,17 @@ async def call_tool(tool_name: str, arguments: dict) -> list[types.TextContent]:
     if tool_name == "delete_tool":
         name = arguments["name"]
 
-        # Guard: never delete static tools
         if name in STATIC_HANDLERS:
             return [types.TextContent(type="text",
                 text=f"'{name}' is a built-in tool and cannot be deleted.")]
 
-        # Remove from disk
         success, msg = delete_tool_from_disk(name)
         if not success:
             return [types.TextContent(type="text", text=msg)]
 
-        # Remove from memory — both the handler and the schema.
-        # CONCEPT: Why .clear() + .extend() instead of reassignment?
-        #   DYNAMIC_SCHEMAS is a module-level list. Inside an async function,
-        #   reassigning it (DYNAMIC_SCHEMAS = [...]) requires `global`, which
-        #   causes Python scoping conflicts if the variable appears anywhere
-        #   else in the function.
-        #   Mutating in place with .clear() + .extend() sidesteps this entirely
-        #   — we never reassign the variable, just change its contents.
         DYNAMIC_HANDLERS.pop(name, None)
-        kept = [t for t in DYNAMIC_SCHEMAS if t["name"] != name]
-        DYNAMIC_SCHEMAS.clear()
-        DYNAMIC_SCHEMAS.extend(kept)
+        # Mutate in place instead of reassigning — avoids the global/scoping issue
+        DYNAMIC_SCHEMAS[:] = [t for t in DYNAMIC_SCHEMAS if t["name"] != name]
 
         return [types.TextContent(type="text",
             text=f"Tool '{name}' deleted from memory and disk.")]
