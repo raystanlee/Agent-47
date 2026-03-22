@@ -52,7 +52,7 @@ Tool saved to disk — available on every future run
                     └────────┬─────────────┘
                              │
                     ┌────────▼─────────────┐
-                    │     Agent Loop        │
+                    │      Agent Loop       │
                     │  (prefix routing)     │
                     └───┬─────────┬────────┘
                         │         │
