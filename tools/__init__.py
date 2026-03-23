@@ -13,7 +13,7 @@ from tools.handlers import (
     delete_file, delete_folder_contents,
     create_folder, move_file, rename_file,
     find_files, open_file,
-    git_status, git_diff, git_diff_stat
+    git_status, git_diff, git_diff_stat, execute_python,
 )
 
 TOOL_REGISTRY = {
@@ -30,4 +30,5 @@ TOOL_REGISTRY = {
     "git_status":             git_status,
     "git_diff":               git_diff,
     "git_diff_stat":          git_diff_stat,
+    "execute_python":         execute_python,
 }

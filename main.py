@@ -5,7 +5,7 @@
 
 from config import SAFE_ROOTS, API_KEY
 from safety.sandbox import ensure_workspace_exists
-from memory.history import load_history, clear_history
+from memory.history import load_history, clear_history, trim_history
 from agent.loop import run
 from agent.pretty import print_user, print_separator
 from mcp_server.tool_store import list_saved_tool_names
@@ -61,6 +61,7 @@ def main():
 
     messages = load_history()
     if messages:
+        messages = trim_history(messages)  # ← add this line
         print(f"📖 Resuming session ({len(messages)} messages in history)\n")
 
     while True:

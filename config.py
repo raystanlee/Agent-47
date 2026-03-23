@@ -35,5 +35,6 @@ Rules:
 - Never push without user confirmation
 - Always use git_diff_stat before git_diff — avoid loading full diffs unless necessary
 - Match the user's writing style — do not make it sound corporate or formal
+- Never use read_file on CSV or data files — always use execute_python with pandas instead
 - Be concise in your own responses
 """

@@ -14,7 +14,7 @@ from mcp import types
 from tools.handlers import (
     list_files, delete_file, delete_folder_contents,
     create_folder, move_file, rename_file, find_files, open_file,
-    git_status, git_diff, git_diff_stat,
+    git_status, git_diff, git_diff_stat, execute_python,
 )
 from mcp_server.tool_store import (
     save_tool, load_all_tools,
@@ -32,6 +32,7 @@ STATIC_HANDLERS = {
     "find_files":             find_files,
     "open_file":              open_file,
     "git_diff_stat": git_diff_stat,
+    "execute_python": execute_python,
 }
 
 # Populated at startup from disk, and grows as create_tool is called
@@ -276,6 +277,31 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["name"]
             }
         ),
+        types.Tool(
+            name="execute_python",
+            description=(
+                "Execute a Python code snippet and return the output. "
+                "Use this to analyze data, run calculations, process files, or test ideas. "
+                "WORKSPACE variable is pre-injected pointing to the safe working directory. "
+                "Do not use subprocess, os.system, or network imports."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "description": "Python code to execute. Print results to see them."
+                    },
+                    "working_dir": {
+                        "type": "string",
+                        "description": "Optional working directory (must be within SAFE_ROOTS). Defaults to first safe root.",
+                        "default": ""
+                    }
+                },
+                "required": ["code"]
+            }
+        ),
+
     ]
 
     # Append dynamic tool schemas so Claude knows they exist
