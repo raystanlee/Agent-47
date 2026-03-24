@@ -1,16 +1,6 @@
 # agent/loop.py
 # ─────────────────────────────────────────────────────────
-# CONCEPT: Config-driven MCP connections.
-#
-# Instead of hardcoding server URLs in code, we read mcp.json
-# at startup. Any HTTP MCP server can be added by editing the
-# JSON — no code changes needed.
-#
-# Architecture:
-#   - Local stdio server  → always connected (your file tools)
-#   - Remote HTTP servers → loaded dynamically from mcp.json
-#
-# CONCEPT 2: Config-driven MCP connections with intent routing.
+# CONCEPT: Config-driven MCP connections with intent routing.
 #
 # Instead of sending ALL tool schemas every turn (expensive),
 # a cheap Haiku classifier first decides which servers are
@@ -20,6 +10,10 @@
 #   - Local stdio server  → always connected (your file tools)
 #   - Remote HTTP servers → loaded dynamically from mcp.json
 #   - Classifier          → routes to relevant servers only
+#
+# Two public entry points:
+#   run()       → sync, for main.py (uses asyncio.run())
+#   run_async() → async, for telegram_bot.py (already in event loop)
 # ─────────────────────────────────────────────────────────
 
 import asyncio
@@ -66,7 +60,21 @@ def load_mcp_config() -> dict:
 
 
 def run(messages: list[dict], tracker: UsageTracker = None) -> list[dict]:
+    """
+    Sync entry point — used by main.py.
+    Bridges sync code into the async agent loop via asyncio.run().
+    """
     return asyncio.run(_run_async(messages, tracker or UsageTracker()))
+
+
+async def run_async(messages: list[dict], tracker: UsageTracker = None) -> list[dict]:
+    """
+    Async entry point — used by telegram_bot.py.
+    Called with await when already inside a running event loop.
+    asyncio.run() cannot be called from inside an event loop,
+    so Telegram needs this version instead.
+    """
+    return await _run_async(messages, tracker or UsageTracker())
 
 
 async def _collect_tools(session: ClientSession, prefix: str) -> tuple[list[dict], dict]:
@@ -207,7 +215,6 @@ async def _run_async(messages: list[dict], tracker: UsageTracker) -> list[dict]:
             async with AsyncExitStack() as stack:
                 remote_sessions = await _connect_remote_servers(config, stack)
 
-                # Classify which servers are needed for this message
                 user_message = messages[-1].get("content", "") if messages else ""
                 needed_servers = await classify_servers(
                     user_message, remote_sessions, tracker
@@ -217,12 +224,10 @@ async def _run_async(messages: list[dict], tracker: UsageTracker) -> list[dict]:
                     all_tools = []
                     owner_map = {}
 
-                    # Always include local tools
                     t, m = await _collect_tools(local_session, prefix="local")
                     all_tools.extend(t)
                     owner_map.update(m)
 
-                    # Only include remote servers the classifier selected
                     for name, session in remote_sessions:
                         if name in needed_servers:
                             t, m = await _collect_tools(session, prefix=name)

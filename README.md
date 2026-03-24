@@ -1,95 +1,106 @@
-# Agent 47 — My PC AI Agent
+# Agent 47 — My Personal AI Agent
 
-An AI agent that manages files, talks to GitHub, searches the web, and reads Gmail — all through natural language. It connects to multiple MCP servers simultaneously so it can chain local file operations, GitHub API calls, web search, and email in a single task. Built as a learning project to understand how agentic AI and the Model Context Protocol work from the ground up.
+A personal AI agent that runs on your Mac, connects to your phone via Telegram, manages files, talks to GitHub, searches the web, reads Gmail, executes code, and extends itself by writing new tools on demand. Built from scratch to understand how agentic AI and the Model Context Protocol work at a fundamental level.
+
+> 🎬 *Demo GIF coming soon*
 
 ## What it does
 
-You tell it what to do in plain English and it figures out the steps. Things like:
+You tell it what to do in plain English — from your terminal or your phone — and it figures out the steps:
 
-- "Delete all files in the temp folder"
 - "Analyze the CSV in my workspace and show me the key trends"
 - "Read my README, check git diff, rewrite it, and push to GitHub"
-- "What is in this image?" ← it will write a vision tool if it doesn't have one
-- "Search GitHub for issues in my repo" ← talks to GitHub directly
-- "Search the web for X and summarise the results"
+- "What is in this image?" ← writes a vision tool on the spot if needed
+- "Search GitHub for open issues in my repo"
+- "Search the web for the latest AI research and summarise it"
 - "What are my most recent emails about?"
+- "Delete all files in the temp folder"
 
 If it needs a capability it doesn't have yet, it writes the tool itself, registers it, and uses it — all in the same turn. Those tools are saved to disk and available on every future run.
 
-## How it works
+## Interfaces
 
-The agent uses Claude as the brain (planner and orchestrator). You give it an instruction, Claude decides which tools to call and in what order, and Python executes the actual operations. Claude never touches your file system or GitHub directly — it just plans, your code acts.
+| Interface | How to run | Use case |
+|---|---|---|
+| Terminal | `python main.py` | Development, debugging |
+| Telegram | `python telegram_bot.py` | Phone access, anywhere |
 
-Tools are served over **MCP (Model Context Protocol)** — an open standard that separates your agent logic from your tool layer. The agent connects to **multiple MCP servers simultaneously**:
+Both share the same history, tools, and cost tracking.
 
-- **Local server** — file ops, read/write files, code execution, git tools, dynamic tool creation
-- **GitHub MCP server** — read/write issues, PRs, files, branches, search code, and more
-- **Brave Search MCP server** — web search, news, images, video, local search
-- **Gmail MCP server** — read, search, summarise, and send emails
+## Architecture
 
-Servers are defined in `mcp.json` — add any MCP server by dropping an entry there, no code changes needed.
+```
+You (terminal or phone)
+        │
+        ▼
+┌───────────────────┐
+│   Interface Layer  │
+│ main.py / Telegram │
+└────────┬──────────┘
+         │
+         ▼
+┌───────────────────────────────────────┐
+│           Agent Loop (loop.py)         │
+│                                        │
+│  1. Haiku classifier → which servers?  │
+│  2. Fetch only relevant tool schemas   │
+│  3. Claude plans → tools execute       │
+│  4. Track tokens + cost per turn       │
+└──┬──────────┬──────────┬──────────┬───┘
+   │          │          │          │
+   ▼          ▼          ▼          ▼
+Local MCP  GitHub MCP  Brave MCP  Gmail MCP
+(stdio)    (HTTP)      (stdio)    (stdio)
+file ops   repos       web search read/send
+git tools  issues      news       emails
+execute_py PRs         images
+dynamic    search
+tools
+```
+
+### Intent-based tool routing
+
+Every turn, a cheap Haiku classifier decides which MCP servers are actually needed before the main Sonnet call. A simple "hi" only loads local tools (~20 schemas) instead of all servers (~85 schemas) — cutting input token cost by ~70% on focused tasks.
+
+```
+User message → Haiku classifier → ["github"] → load only github + local tools
+                                                → main Sonnet call (cheaper)
+```
 
 ### The self-extension loop
 
 ```
 User asks for something
     ↓
-Agent checks available tools (from all servers)
+Agent checks available tools
     ↓
-Tool missing? → calls create_tool → writes Python code → registers it live
+Tool missing? → create_tool → writes Python → registers live
     ↓
 Calls the new tool immediately
     ↓
-Tool saved to disk — available on every future run
-```
-
-### Multi-server architecture
-
-```
-                    ┌──────────────────────┐
-                    │       Claude         │
-                    │  (plans & decides)   │
-                    └────────┬─────────────┘
-                             │
-                    ┌────────▼─────────────┐
-                    │      Agent Loop      │
-                    │  (prefix routing)    │
-                    └──┬──────┬──────┬─────┘
-                       │      │      │      │
-            ┌──────────▼─┐ ┌──▼────┐ ┌─▼──────┐ ┌─▼──────┐
-            │ Local MCP  │ │GitHub │ │ Brave  │ │ Gmail  │
-            │ (stdio)    │ │ (HTTP)│ │(stdio) │ │(stdio) │
-            │            │ │       │ │        │ │        │
-            │ file ops   │ │repos, │ │web,    │ │read,   │
-            │ git tools  │ │issues,│ │news,   │ │search, │
-            │ execute_py │ │PRs,   │ │images  │ │send    │
-            │ dynamic    │ │search │ │        │ │        │
-            │ tools      │ │       │ │        │ │        │
-            └────────────┘ └───────┘ └────────┘ └────────┘
+Saved to disk — available forever
 ```
 
 ## Setup
 
-**1. Clone the repo and activate the virtual environment:**
+**1. Clone and activate venv:**
 ```bash
 cd "Agent 47"
 python -m venv venv
 source venv/bin/activate
-```
-
-**2. Install dependencies:**
-```bash
 pip install -r requirements.txt
 ```
 
-**3. Add your API keys to `.env`:**
+**2. Add API keys to `.env`:**
 ```
 ANTHROPIC_API_KEY=sk-ant-...
 GITHUB_TOKEN=ghp_...
 BRAVE_API_KEY=BSA...
+TELEGRAM_TOKEN=...
+TELEGRAM_USER_ID=...
 ```
 
-**4. Set your workspace folders in `config.py`:**
+**3. Set workspace folders in `config.py`:**
 ```python
 SAFE_ROOTS = [
     Path("/Users/you/Agent 47").resolve(),
@@ -97,7 +108,7 @@ SAFE_ROOTS = [
 ]
 ```
 
-**5. Configure external MCP servers in `mcp.json`:**
+**4. Configure MCP servers in `mcp.json`:**
 ```json
 {
   "mcpServers": {
@@ -116,42 +127,53 @@ SAFE_ROOTS = [
 }
 ```
 
-For Gmail, follow the OAuth setup in `get_gmail_token.py` to generate credentials, then add the gmail entry to `mcp.json`.
+For Gmail, run `get_gmail_token.py` once for OAuth setup, then add the gmail entry to `mcp.json`. Add any MCP server by dropping an entry — no code changes needed.
 
-**6. Run it:**
+**5. Run:**
 ```bash
-python main.py
+python main.py          # terminal
+python telegram_bot.py  # phone via Telegram
 ```
 
-## Session commands
+## Commands
 
+**Terminal:**
 | Command | What it does |
 |---|---|
-| `tools` | List all available tools (built-in + agent-created) |
-| `clear history` | Wipe conversation memory and start fresh |
-| `quit` | Exit and print session cost summary |
+| `tools` | List all available tools |
+| `clear history` | Reset conversation memory |
+| `quit` | Exit and print cost summary |
+
+**Telegram:**
+| Command | What it does |
+|---|---|
+| `/start` | Show help |
+| `/clear` | Reset conversation memory |
+| `/cost` | Show session token usage and cost |
+| `/tools` | List available tools |
 
 ## Project structure
 
 ```
 Agent 47/
-├── main.py               # Entry point
+├── main.py               # Terminal entry point
+├── telegram_bot.py       # Telegram bot entry point
 ├── config.py             # Settings and system prompt
 ├── mcp.json              # MCP server config (gitignored)
 ├── agent/
-│   ├── loop.py           # The agentic loop (multi-server MCP)
+│   ├── loop.py           # Agentic loop + classifier + routing
 │   └── pretty.py         # Coloured terminal output
 ├── mcp_server/
 │   ├── server.py         # Local MCP server
-│   ├── tool_store.py     # Saves/loads dynamic tools to disk
+│   ├── tool_store.py     # Dynamic tool persistence
 │   └── dynamic_tools/    # Agent-created tools (auto-generated)
 ├── tools/
-│   ├── handlers.py       # What each built-in tool actually does
+│   ├── handlers.py       # Built-in tool implementations
 │   └── __init__.py       # Tool registry
 ├── safety/
-│   └── sandbox.py        # Keeps the agent inside allowed workspaces
+│   └── sandbox.py        # Path sandboxing across all safe roots
 └── memory/
-    ├── history.py         # Conversation persistence
+    ├── history.py         # Conversation persistence + auto-summarisation
     └── usage.py           # Token and cost tracking
 ```
 
@@ -163,7 +185,7 @@ Agent 47/
 | `read_file` | Read a text file (capped at 8k chars) |
 | `write_file` | Write or create a file |
 | `delete_file` | Delete a file or folder |
-| `delete_folder_contents` | Empty a folder without deleting it |
+| `delete_folder_contents` | Empty a folder |
 | `create_folder` | Create nested folders |
 | `move_file` | Move a file or folder |
 | `rename_file` | Rename a file or folder |
@@ -171,27 +193,38 @@ Agent 47/
 | `open_file` | Open with macOS default app |
 | `git_status` | Run `git status` in a repo |
 | `git_diff` | Full diff (staged or unstaged) |
-| `git_diff_stat` | Compact diff summary — filenames and line counts only |
-| `execute_python` | Run a Python snippet in a sandboxed subprocess |
+| `git_diff_stat` | Compact diff summary |
+| `execute_python` | Run Python in a sandboxed subprocess |
 | `create_tool` | Write and register a new tool at runtime |
-| `list_dynamic_tools` | List all agent-created tools |
-| `delete_tool` | Remove a dynamic tool from memory and disk |
+| `list_dynamic_tools` | List agent-created tools |
+| `delete_tool` | Remove a dynamic tool |
 
 Plus all tools from GitHub, Brave Search, and Gmail MCP servers.
 
 ## Cost tracking
 
-Every session prints a summary on exit showing input tokens, output tokens, total cost, and which turns were most expensive. Current pricing is Claude Sonnet 4.6 — $3/M input, $15/M output.
+Every session prints a breakdown on exit — API calls, input/output tokens, estimated cost, and most expensive turns. Pricing: Claude Sonnet 4.6 at $3/M input, $15/M output. The Haiku classifier runs at ~$0.001/M input — nearly free.
 
-The biggest cost driver is tool schemas: every API call sends the full schema list from all connected MCP servers. A session with GitHub + Brave + Gmail connected costs more per turn than one with only local tools — even if none of those tools are used.
+The biggest cost driver is tool schemas sent as input on every turn. The classifier cuts this by only loading schemas for servers actually needed.
 
 ## Notes
 
-- The agent can only access folders defined in `SAFE_ROOTS` in `config.py`
-- Conversation history is summarised automatically when it gets too long
-- Agent-created tools are saved in `mcp_server/dynamic_tools/` — one `.py` + one `.json` per tool
-- `mcp.json` is gitignored — keep API keys in `.env` and reference them with `${VAR_NAME}`
-- Run `clear history` to reset memory between unrelated sessions
+- Agent can only access folders defined in `SAFE_ROOTS` — nothing outside them
+- History is summarised automatically when it gets too long to prevent rate limits
+- `mcp.json` is gitignored — keep secrets in `.env`, reference with `${VAR_NAME}`
+- Dynamic tools survive restarts — saved as `.py` + `.json` pairs in `dynamic_tools/`
+
+## Roadmap
+
+- [x] Local file management via MCP
+- [x] Multi-server MCP (GitHub, Brave, Gmail)
+- [x] Dynamic tool creation at runtime
+- [x] Intent-based tool routing (Haiku classifier)
+- [x] Telegram bot — phone access
+- [x] Token + cost tracking
+- [ ] Scheduled / proactive tasks
+- [ ] Voice interface
+- [ ] Hardware integration (NVIDIA Orin Nano + sensors)
 
 ---
 
