@@ -1,19 +1,18 @@
 # Agent 47 — My PC AI Agent
 
-An AI agent that manages files on your computer and talks to GitHub — all through natural language. It connects to multiple MCP servers at the same time, so it can chain local file operations with GitHub API calls in a single task. Built as a learning project to understand how agentic AI and the Model Context Protocol work.
+An AI agent that manages files, talks to GitHub, searches the web, and reads Gmail — all through natural language. It connects to multiple MCP servers simultaneously so it can chain local file operations, GitHub API calls, web search, and email in a single task. Built as a learning project to understand how agentic AI and the Model Context Protocol work from the ground up.
 
 ## What it does
 
 You tell it what to do in plain English and it figures out the steps. Things like:
 
 - "Delete all files in the temp folder"
-- "Open the largest image"
-- "Move all PDFs to the archive folder"
-- "Show me what's in the reports folder"
+- "Analyze the CSV in my workspace and show me the key trends"
 - "Read my README, check git diff, rewrite it, and push to GitHub"
 - "What is in this image?" ← it will write a vision tool if it doesn't have one
 - "Search GitHub for issues in my repo" ← talks to GitHub directly
-- "Search the web for X" ← uses Brave Search
+- "Search the web for X and summarise the results"
+- "What are my most recent emails about?"
 
 If it needs a capability it doesn't have yet, it writes the tool itself, registers it, and uses it — all in the same turn. Those tools are saved to disk and available on every future run.
 
@@ -23,11 +22,12 @@ The agent uses Claude as the brain (planner and orchestrator). You give it an in
 
 Tools are served over **MCP (Model Context Protocol)** — an open standard that separates your agent logic from your tool layer. The agent connects to **multiple MCP servers simultaneously**:
 
-- **Local server** — file ops, dynamic tool creation, git status/diff, image analysis
+- **Local server** — file ops, read/write files, code execution, git tools, dynamic tool creation
 - **GitHub MCP server** — read/write issues, PRs, files, branches, search code, and more
 - **Brave Search MCP server** — web search, news, images, video, local search
+- **Gmail MCP server** — read, search, summarise, and send emails
 
-This means you can ask it to do things across your local machine and the internet in the same turn.
+Servers are defined in `mcp.json` — add any MCP server by dropping an entry there, no code changes needed.
 
 ### The self-extension loop
 
@@ -52,22 +52,21 @@ Tool saved to disk — available on every future run
                     └────────┬─────────────┘
                              │
                     ┌────────▼─────────────┐
-                    │      Agent Loop       │
-                    │  (prefix routing)     │
-                    └───┬─────────┬────────┘
-                        │         │
-             ┌──────────▼──┐  ┌───▼──────────┐  ┌──────────────────┐
-             │ Local MCP   │  │ GitHub MCP    │  │ Brave Search MCP │
-             │ (stdio)     │  │ (HTTP)        │  │ (stdio/npx)      │
-             │             │  │               │  │                  │
-             │ file ops    │  │ repos, issues,│  │ web, news,       │
-             │ git tools   │  │ PRs, search.. │  │ images, video    │
-             │ dynamic     │  │               │  │                  │
-             │ tools       │  │               │  │                  │
-             └─────────────┘  └───────────────┘  └──────────────────┘
+                    │      Agent Loop      │
+                    │  (prefix routing)    │
+                    └──┬──────┬──────┬─────┘
+                       │      │      │      │
+            ┌──────────▼─┐ ┌──▼────┐ ┌─▼──────┐ ┌─▼──────┐
+            │ Local MCP  │ │GitHub │ │ Brave  │ │ Gmail  │
+            │ (stdio)    │ │ (HTTP)│ │(stdio) │ │(stdio) │
+            │            │ │       │ │        │ │        │
+            │ file ops   │ │repos, │ │web,    │ │read,   │
+            │ git tools  │ │issues,│ │news,   │ │search, │
+            │ execute_py │ │PRs,   │ │images  │ │send    │
+            │ dynamic    │ │search │ │        │ │        │
+            │ tools      │ │       │ │        │ │        │
+            └────────────┘ └───────┘ └────────┘ └────────┘
 ```
-
-Servers are defined in `mcp.json` — add a new server by adding an entry there, no code changes needed.
 
 ## Setup
 
@@ -83,16 +82,12 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-**3. Add your API keys:**
-
-Create a `.env` file in the project root:
+**3. Add your API keys to `.env`:**
 ```
 ANTHROPIC_API_KEY=sk-ant-...
 GITHUB_TOKEN=ghp_...
 BRAVE_API_KEY=BSA...
 ```
-
-GitHub and Brave tools are only available if you provide the relevant keys. The GitHub token needs the scopes required by GitHub's MCP server (repo access, etc.).
 
 **4. Set your workspace folders in `config.py`:**
 ```python
@@ -102,9 +97,28 @@ SAFE_ROOTS = [
 ]
 ```
 
-The agent can access any of these roots. Paths outside all of them are blocked.
+**5. Configure external MCP servers in `mcp.json`:**
+```json
+{
+  "mcpServers": {
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": { "Authorization": "Bearer ${GITHUB_TOKEN}" }
+    },
+    "brave": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@brave/brave-search-mcp-server"],
+      "env": { "BRAVE_API_KEY": "${BRAVE_API_KEY}" }
+    }
+  }
+}
+```
 
-**5. Run it:**
+For Gmail, follow the OAuth setup in `get_gmail_token.py` to generate credentials, then add the gmail entry to `mcp.json`.
+
+**6. Run it:**
 ```bash
 python main.py
 ```
@@ -115,30 +129,30 @@ python main.py
 |---|---|
 | `tools` | List all available tools (built-in + agent-created) |
 | `clear history` | Wipe conversation memory and start fresh |
-| `quit` | Exit |
+| `quit` | Exit and print session cost summary |
 
 ## Project structure
 
 ```
 Agent 47/
-├── main.py               # Entry point — connects to all MCP servers
+├── main.py               # Entry point
 ├── config.py             # Settings and system prompt
-├── mcp.json              # MCP server config (add servers here)
+├── mcp.json              # MCP server config (gitignored)
 ├── agent/
 │   ├── loop.py           # The agentic loop (multi-server MCP)
 │   └── pretty.py         # Coloured terminal output
 ├── mcp_server/
-│   ├── server.py         # Local MCP server — exposes file + git + vision tools
+│   ├── server.py         # Local MCP server
 │   ├── tool_store.py     # Saves/loads dynamic tools to disk
-│   └── dynamic_tools/    # Agent-created tools live here (auto-generated)
+│   └── dynamic_tools/    # Agent-created tools (auto-generated)
 ├── tools/
 │   ├── handlers.py       # What each built-in tool actually does
-│   ├── definitions.py    # Tool schemas (legacy, kept for reference)
 │   └── __init__.py       # Tool registry
 ├── safety/
-│   └── sandbox.py        # Keeps the agent inside the allowed workspaces
+│   └── sandbox.py        # Keeps the agent inside allowed workspaces
 └── memory/
-    └── history.json      # Saves conversation between sessions
+    ├── history.py         # Conversation persistence
+    └── usage.py           # Token and cost tracking
 ```
 
 ## Built-in tools
@@ -146,31 +160,38 @@ Agent 47/
 | Tool | What it does |
 |---|---|
 | `list_files` | List folder contents |
-| `read_file` | Read a text file |
-| `write_file` | Write/create a file |
+| `read_file` | Read a text file (capped at 8k chars) |
+| `write_file` | Write or create a file |
 | `delete_file` | Delete a file or folder |
 | `delete_folder_contents` | Empty a folder without deleting it |
 | `create_folder` | Create nested folders |
 | `move_file` | Move a file or folder |
 | `rename_file` | Rename a file or folder |
-| `find_files` | Recursive glob search |
+| `find_files` | Recursive glob search across all safe roots |
 | `open_file` | Open with macOS default app |
 | `git_status` | Run `git status` in a repo |
-| `git_diff` | Run `git diff` (staged or unstaged) |
+| `git_diff` | Full diff (staged or unstaged) |
+| `git_diff_stat` | Compact diff summary — filenames and line counts only |
+| `execute_python` | Run a Python snippet in a sandboxed subprocess |
 | `create_tool` | Write and register a new tool at runtime |
 | `list_dynamic_tools` | List all agent-created tools |
-| `delete_tool` | Remove a dynamic tool from memory + disk |
+| `delete_tool` | Remove a dynamic tool from memory and disk |
 
-Plus everything from the GitHub and Brave Search MCP servers.
+Plus all tools from GitHub, Brave Search, and Gmail MCP servers.
+
+## Cost tracking
+
+Every session prints a summary on exit showing input tokens, output tokens, total cost, and which turns were most expensive. Current pricing is Claude Sonnet 4.6 — $3/M input, $15/M output.
+
+The biggest cost driver is tool schemas: every API call sends the full schema list from all connected MCP servers. A session with GitHub + Brave + Gmail connected costs more per turn than one with only local tools — even if none of those tools are used.
 
 ## Notes
 
-- The agent can only access the folders you define in `config.py` — nothing outside them
-- Conversation history is saved in `memory/history.json` so it remembers between sessions
+- The agent can only access folders defined in `SAFE_ROOTS` in `config.py`
+- Conversation history is summarised automatically when it gets too long
 - Agent-created tools are saved in `mcp_server/dynamic_tools/` — one `.py` + one `.json` per tool
-- You can ask the agent to delete broken or duplicate tools and it will clean them up itself
-- Run `clear history` inside the session to reset memory
-- Servers are loaded from `mcp.json` at startup — add new MCP servers there without touching any code
+- `mcp.json` is gitignored — keep API keys in `.env` and reference them with `${VAR_NAME}`
+- Run `clear history` to reset memory between unrelated sessions
 
 ---
 

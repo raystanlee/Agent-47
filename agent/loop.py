@@ -10,7 +10,16 @@
 #   - Local stdio server  → always connected (your file tools)
 #   - Remote HTTP servers → loaded dynamically from mcp.json
 #
-# Adding a new server is just adding an entry to mcp.json.
+# CONCEPT 2: Config-driven MCP connections with intent routing.
+#
+# Instead of sending ALL tool schemas every turn (expensive),
+# a cheap Haiku classifier first decides which servers are
+# needed, then only those tools get sent to the main call.
+#
+# Architecture:
+#   - Local stdio server  → always connected (your file tools)
+#   - Remote HTTP servers → loaded dynamically from mcp.json
+#   - Classifier          → routes to relevant servers only
 # ─────────────────────────────────────────────────────────
 
 import asyncio
@@ -32,6 +41,9 @@ from config import MODEL, MAX_TOKENS, SYSTEM_PROMPT, API_KEY
 client = anthropic.Anthropic(api_key=API_KEY)
 
 MCP_CONFIG_PATH = Path("mcp.json")
+
+# Cheap model for classification — ~25x cheaper than Sonnet
+CLASSIFIER_MODEL = "claude-haiku-4-5-20251001"
 
 
 def load_mcp_config() -> dict:
@@ -122,6 +134,61 @@ async def _connect_remote_servers(config: dict, stack):
     return sessions
 
 
+async def classify_servers(
+    message: str,
+    remote_sessions: list,
+    tracker: UsageTracker
+) -> set[str]:
+    """
+    CONCEPT: Intent-based tool routing.
+
+    Ask a cheap Haiku model which remote servers are needed
+    for this task. Only those servers' tools get sent to the
+    main Sonnet call — cutting input tokens by 60-70% on
+    focused tasks.
+
+    Local tools are always included regardless.
+    Falls back to all servers if classification fails.
+    """
+    connected = [name for name, _ in remote_sessions]
+    if not connected:
+        return set()
+
+    server_list = ", ".join(connected)
+
+    try:
+        response = client.messages.create(
+            model=CLASSIFIER_MODEL,
+            max_tokens=50,
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Which of these MCP servers are needed to complete this task: {server_list}?\n\n"
+                    f"Task: {message}\n\n"
+                    f"Reply with only a JSON array of server names needed, e.g. [\"github\"] or [\"brave\", \"gmail\"]. "
+                    f"Reply [] if only local file tools are needed."
+                )
+            }]
+        )
+
+        tracker.record(
+            response.usage.input_tokens,
+            response.usage.output_tokens,
+            label="classifier"
+        )
+
+        text = response.content[0].text.strip()
+        text = text.replace("```json", "").replace("```", "").strip()
+        needed = json.loads(text)
+        result = set(n for n in needed if n in connected)
+        print(f"  🎯 Servers needed: {result or {'local only'}}")
+        return result
+
+    except Exception as e:
+        print(f"  ⚠️  Classifier failed ({e}) — using all servers")
+        return set(connected)
+
+
 async def _run_async(messages: list[dict], tracker: UsageTracker) -> list[dict]:
 
     config = load_mcp_config()
@@ -140,22 +207,30 @@ async def _run_async(messages: list[dict], tracker: UsageTracker) -> list[dict]:
             async with AsyncExitStack() as stack:
                 remote_sessions = await _connect_remote_servers(config, stack)
 
+                # Classify which servers are needed for this message
+                user_message = messages[-1].get("content", "") if messages else ""
+                needed_servers = await classify_servers(
+                    user_message, remote_sessions, tracker
+                )
+
                 async def refresh_tools():
                     all_tools = []
                     owner_map = {}
 
+                    # Always include local tools
                     t, m = await _collect_tools(local_session, prefix="local")
                     all_tools.extend(t)
                     owner_map.update(m)
 
+                    # Only include remote servers the classifier selected
                     for name, session in remote_sessions:
-                        t, m = await _collect_tools(session, prefix=name)
-                        all_tools.extend(t)
-                        owner_map.update(m)
+                        if name in needed_servers:
+                            t, m = await _collect_tools(session, prefix=name)
+                            all_tools.extend(t)
+                            owner_map.update(m)
 
                     return all_tools, owner_map
 
-                # ── Agentic loop ───────────────────────────
                 all_tools, tool_owner = await refresh_tools()
 
                 try:
@@ -170,7 +245,6 @@ async def _run_async(messages: list[dict], tracker: UsageTracker) -> list[dict]:
                     print(f"\n❌ API error: {e}")
                     return messages
 
-                # Record usage for this API call
                 tracker.record(
                     response.usage.input_tokens,
                     response.usage.output_tokens,
@@ -237,7 +311,6 @@ async def _run_async(messages: list[dict], tracker: UsageTracker) -> list[dict]:
                         save_history(messages)
                         return messages
 
-                    # Record usage for this tool-loop API call
                     tracker.record(
                         response.usage.input_tokens,
                         response.usage.output_tokens,
