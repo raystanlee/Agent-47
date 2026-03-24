@@ -6,4 +6,7 @@ __pycache__/
 .DS_Store
 mcp_server/dynamic_tools/*.py
 mcp_server/dynamic_tools/*.json
-mcp.json
+mcp.jsonclient_secret_google.json
+client_secret.json
+get_gmail_token.py
+gmail_token.json

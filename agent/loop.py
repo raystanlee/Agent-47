@@ -26,6 +26,7 @@ from mcp.client.streamable_http import streamablehttp_client
 
 from agent.pretty import print_claude, print_tool_call, print_tool_result
 from memory.history import save_history
+from memory.usage import UsageTracker
 from config import MODEL, MAX_TOKENS, SYSTEM_PROMPT, API_KEY
 
 client = anthropic.Anthropic(api_key=API_KEY)
@@ -34,23 +35,12 @@ MCP_CONFIG_PATH = Path("mcp.json")
 
 
 def load_mcp_config() -> dict:
-    """
-    Load mcp.json and substitute ${ENV_VAR} placeholders with
-    actual values from the environment.
-
-    CONCEPT: Why substitute env vars here instead of putting
-    secrets directly in the JSON?
-      mcp.json gets committed to Git. Secrets don't.
-      The ${VAR} pattern keeps the config readable and shareable
-      while keeping secrets in .env (which is gitignored).
-    """
     if not MCP_CONFIG_PATH.exists():
         print("⚠️  No mcp.json found — only local tools will be available.")
         return {"mcpServers": {}}
 
     raw = MCP_CONFIG_PATH.read_text()
 
-    # Replace ${VAR_NAME} with the actual env var value
     def substitute(match):
         var_name = match.group(1)
         value = os.environ.get(var_name)
@@ -63,17 +53,11 @@ def load_mcp_config() -> dict:
     return json.loads(substituted)
 
 
-def run(messages: list[dict]) -> list[dict]:
-    return asyncio.run(_run_async(messages))
+def run(messages: list[dict], tracker: UsageTracker = None) -> list[dict]:
+    return asyncio.run(_run_async(messages, tracker or UsageTracker()))
 
 
 async def _collect_tools(session: ClientSession, prefix: str) -> tuple[list[dict], dict]:
-    """
-    Fetch tools from a session and prefix their names.
-    Returns (tools_for_claude, owner_map).
-
-    owner_map: {prefixed_name: (session, real_name)}
-    """
     response = await session.list_tools()
     tools_for_claude = []
     owner_map = {}
@@ -91,11 +75,6 @@ async def _collect_tools(session: ClientSession, prefix: str) -> tuple[list[dict
 
 
 async def _connect_remote_servers(config: dict, stack):
-    """
-    Connect to all servers in mcp.json using the provided AsyncExitStack.
-    Supports both 'http' (streamable HTTP) and 'stdio' (subprocess) types.
-    Skips servers that fail — one bad connection never crashes the others.
-    """
     servers = config.get("mcpServers", {})
     sessions = []
 
@@ -111,12 +90,10 @@ async def _connect_remote_servers(config: dict, stack):
                 )
 
             elif server_type == "stdio":
-                # Substitute env vars in the env dict
                 env = {
                     k: os.path.expandvars(v)
                     for k, v in cfg.get("env", {}).items()
                 }
-                # Also do our ${VAR} substitution
                 env = {
                     k: re.sub(r"\$\{(\w+)\}", lambda m: os.environ.get(m.group(1), ""), v)
                     for k, v in env.items()
@@ -145,11 +122,10 @@ async def _connect_remote_servers(config: dict, stack):
     return sessions
 
 
-async def _run_async(messages: list[dict]) -> list[dict]:
+async def _run_async(messages: list[dict], tracker: UsageTracker) -> list[dict]:
 
     config = load_mcp_config()
 
-    # ── Local stdio server (always connected) ──────────────
     server_params = StdioServerParameters(
         command="python",
         args=["-m", "mcp_server.server"]
@@ -159,29 +135,19 @@ async def _run_async(messages: list[dict]) -> list[dict]:
         async with ClientSession(local_read, local_write) as local_session:
             await local_session.initialize()
 
-            # ── Remote HTTP servers (from mcp.json) ────────
             from contextlib import AsyncExitStack
 
             async with AsyncExitStack() as stack:
                 remote_sessions = await _connect_remote_servers(config, stack)
 
-                # ── Tool refresh ───────────────────────────
                 async def refresh_tools():
-                    """
-                    Re-fetch tools from ALL servers.
-                    Called before each Claude request so:
-                      - newly created dynamic tools are visible
-                      - any server added to mcp.json mid-session works
-                    """
-                    all_tools  = []
-                    owner_map  = {}
+                    all_tools = []
+                    owner_map = {}
 
-                    # Local tools
                     t, m = await _collect_tools(local_session, prefix="local")
                     all_tools.extend(t)
                     owner_map.update(m)
 
-                    # Remote tools (one prefix per server name)
                     for name, session in remote_sessions:
                         t, m = await _collect_tools(session, prefix=name)
                         all_tools.extend(t)
@@ -192,12 +158,23 @@ async def _run_async(messages: list[dict]) -> list[dict]:
                 # ── Agentic loop ───────────────────────────
                 all_tools, tool_owner = await refresh_tools()
 
-                response = client.messages.create(
-                    model=MODEL,
-                    max_tokens=MAX_TOKENS,
-                    system=SYSTEM_PROMPT,
-                    tools=all_tools,
-                    messages=messages,
+                try:
+                    response = client.messages.create(
+                        model=MODEL,
+                        max_tokens=MAX_TOKENS,
+                        system=SYSTEM_PROMPT,
+                        tools=all_tools,
+                        messages=messages,
+                    )
+                except Exception as e:
+                    print(f"\n❌ API error: {e}")
+                    return messages
+
+                # Record usage for this API call
+                tracker.record(
+                    response.usage.input_tokens,
+                    response.usage.output_tokens,
+                    label=f"turn_{tracker.total_api_calls}"
                 )
 
                 while response.stop_reason == "tool_use":
@@ -246,12 +223,25 @@ async def _run_async(messages: list[dict]) -> list[dict]:
 
                     all_tools, tool_owner = await refresh_tools()
 
-                    response = client.messages.create(
-                        model=MODEL,
-                        max_tokens=MAX_TOKENS,
-                        system=SYSTEM_PROMPT,
-                        tools=all_tools,
-                        messages=messages,
+                    try:
+                        response = client.messages.create(
+                            model=MODEL,
+                            max_tokens=MAX_TOKENS,
+                            system=SYSTEM_PROMPT,
+                            tools=all_tools,
+                            messages=messages,
+                        )
+                    except Exception as e:
+                        print(f"\n❌ API error mid-task: {e}")
+                        messages = messages[:-2]
+                        save_history(messages)
+                        return messages
+
+                    # Record usage for this tool-loop API call
+                    tracker.record(
+                        response.usage.input_tokens,
+                        response.usage.output_tokens,
+                        label=f"turn_{tracker.total_api_calls}"
                     )
 
                 for block in response.content:

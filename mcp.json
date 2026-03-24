@@ -1,0 +1,28 @@
+{
+  "mcpServers": {
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": {
+        "Authorization": "Bearer ${GITHUB_TOKEN}"
+      }
+    },
+    "brave": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@brave/brave-search-mcp-server"],
+      "env": {
+        "BRAVE_API_KEY": "${BRAVE_API_KEY}"
+      }
+    },
+    "gmail": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["/Users/ray/Agent 47/venv/lib/python3.13/site-packages/gmail_mcp_server/server.py"],
+      "env": {
+        "GMAIL_CREDENTIALS_FILE": "/Users/ray/Agent 47/client_secret.json",
+        "GMAIL_TOKEN_FILE": "/Users/ray/Agent 47/gmail_token.json"
+      }
+    }
+  }
+}

@@ -121,8 +121,15 @@ def rename_file(path: str, new_name: str) -> str:
 
 
 def find_files(pattern: str, folder: str = "") -> str:
-    base = safe_path(folder) if folder else safe_path(".")
-    matches = [str(f) for f in base.rglob(pattern)]
+    if folder:
+        base = safe_path(folder)
+        matches = [str(f) for f in base.rglob(pattern)]
+    else:
+        # Search ALL safe roots when no folder specified
+        matches = []
+        for root in SAFE_ROOTS:
+            matches.extend([str(f) for f in root.rglob(pattern)])
+    
     if not matches:
         return f"No files matching '{pattern}' found."
     return f"Found {len(matches)} match(es):\n" + "\n".join(matches)
@@ -186,7 +193,7 @@ BLOCKED_PATTERNS = [
     "__import__",
     "eval(",
     "compile(",
-    "open(",        # force use of safe_path instead
+    " open(",        # force use of safe_path instead
     "shutil.rmtree",
     "os.remove",
     "os.unlink",

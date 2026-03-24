@@ -32,6 +32,7 @@
 # without sending thousands of tokens every turn.
 # ─────────────────────────────────────────────────────────
 
+
 import json
 import anthropic
 from pathlib import Path
@@ -126,32 +127,49 @@ def _summarise_old_messages(messages: list[dict]) -> str:
     return response.content[0].text
 
 
+def _is_clean_message(msg: dict) -> bool:
+    """
+    Returns True if a message contains only plain text — no tool_use
+    or tool_result blocks. Only clean messages are safe to keep after
+    trimming, since tool_use/tool_result must always come in matched
+    pairs in adjacent messages.
+    """
+    content = msg.get("content", "")
+    if isinstance(content, str):
+        return True
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict):
+                if block.get("type") in ("tool_use", "tool_result"):
+                    return False
+    return True
+
+
 def trim_history(messages: list[dict]) -> list[dict]:
     """
     If history is too long, summarise the old part and keep
-    only recent turns. Called automatically before each run.
+    only recent CLEAN turns (no tool_use/tool_result blocks).
 
-    Returns the trimmed messages list.
+    This prevents the 'unexpected tool_use_id' error that happens
+    when tool_result blocks are kept without their matching tool_use.
     """
     if len(messages) <= MAX_MESSAGES_BEFORE_SUMMARY:
         return messages
 
-    # Split: old messages to summarise, recent to keep verbatim
-    keep_count = RECENT_TURNS_TO_KEEP * 2  # each turn = user + assistant
-    old_messages  = messages[:-keep_count]
-    recent_messages = messages[-keep_count:]
-
     print(f"📝 History too long ({len(messages)} messages) — summarising...")
+
+    # Keep only clean recent messages — filter out any tool blocks
+    clean_recent = [m for m in messages if _is_clean_message(m)]
+    recent_messages = clean_recent[-(RECENT_TURNS_TO_KEEP * 2):]
+    old_messages = messages[:-(RECENT_TURNS_TO_KEEP * 2)]
 
     try:
         summary = _summarise_old_messages(old_messages)
         print(f"✅ Summarised {len(old_messages)} old messages into 1.")
     except Exception as e:
         print(f"⚠️  Could not summarise history: {e}. Trimming without summary.")
-        # Fall back to just keeping recent turns
         return recent_messages
 
-    # Replace old messages with a single summary message
     summary_message = {
         "role": "user",
         "content": (
@@ -159,8 +177,6 @@ def trim_history(messages: list[dict]) -> list[dict]:
             "Continue from here."
         )
     }
-    # Pair it with a brief assistant acknowledgement so the
-    # message sequence stays valid (must alternate user/assistant)
     ack_message = {
         "role": "assistant",
         "content": "Understood. Continuing from the previous context."
