@@ -222,8 +222,8 @@ The biggest cost driver is tool schemas sent as input on every turn. The classif
 - [x] Intent-based tool routing (Haiku classifier)
 - [x] Telegram bot — phone access
 - [x] Token + cost tracking
-- [ ] Scheduled / proactive tasks
-- [ ] Voice interface
+- [ ] Scheduled / proactive tasks - Pending
+- [ ] Voice interface - Pending
 - [ ] Hardware integration (NVIDIA Orin Nano + sensors)
 
 ---
