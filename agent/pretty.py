@@ -24,6 +24,15 @@ def print_tool_call(name: str, inputs: dict):
 
 
 def print_tool_result(result: str):
+    # Suppress large base64 image data from being printed
+    try:
+        parsed = json.loads(result)
+        if isinstance(parsed, dict) and "image" in parsed:
+            display = {k: (f"<base64 {len(v)} chars>" if k == "image" else v)
+                       for k, v in parsed.items()}
+            result = json.dumps(display)
+    except (json.JSONDecodeError, TypeError):
+        pass
     print(f"  {GREEN}✅ Result:{RESET} {result}")
 
 

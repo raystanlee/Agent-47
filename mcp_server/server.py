@@ -14,7 +14,7 @@ from mcp import types
 from tools.handlers import (
     list_files, delete_file, delete_folder_contents,
     create_folder, move_file, rename_file, find_files, open_file,
-    git_status, git_diff, git_diff_stat, execute_python,
+    git_status, git_diff, git_diff_stat, execute_python, capture_scene
 )
 from mcp_server.tool_store import (
     save_tool, load_all_tools,
@@ -33,6 +33,7 @@ STATIC_HANDLERS = {
     "open_file":              open_file,
     "git_diff_stat": git_diff_stat,
     "execute_python": execute_python,
+    "capture_scene": capture_scene,
 }
 
 # Populated at startup from disk, and grows as create_tool is called
@@ -299,6 +300,15 @@ async def list_tools() -> list[types.Tool]:
                     }
                 },
                 "required": ["code"]
+            }
+        ),
+        types.Tool(
+            name="capture_scene",
+            description="Capture an image and depth reading from the RealSense camera on the Orin. Returns what the camera currently sees.",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
             }
         ),
 

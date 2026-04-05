@@ -1,6 +1,16 @@
 # agent/loop.py
 # ─────────────────────────────────────────────────────────
-# CONCEPT: Config-driven MCP connections with intent routing.
+# CONCEPT: Config-driven MCP connections.
+#
+# Instead of hardcoding server URLs in code, we read mcp.json
+# at startup. Any HTTP MCP server can be added by editing the
+# JSON — no code changes needed.
+#
+# Architecture:
+#   - Local stdio server  → always connected (your file tools)
+#   - Remote HTTP servers → loaded dynamically from mcp.json
+#
+# CONCEPT 2: Config-driven MCP connections with intent routing.
 #
 # Instead of sending ALL tool schemas every turn (expensive),
 # a cheap Haiku classifier first decides which servers are
@@ -10,10 +20,6 @@
 #   - Local stdio server  → always connected (your file tools)
 #   - Remote HTTP servers → loaded dynamically from mcp.json
 #   - Classifier          → routes to relevant servers only
-#
-# Two public entry points:
-#   run()       → sync, for main.py (uses asyncio.run())
-#   run_async() → async, for telegram_bot.py (already in event loop)
 # ─────────────────────────────────────────────────────────
 
 import asyncio
@@ -35,6 +41,7 @@ from config import MODEL, MAX_TOKENS, SYSTEM_PROMPT, API_KEY
 client = anthropic.Anthropic(api_key=API_KEY)
 
 MCP_CONFIG_PATH = Path("mcp.json")
+_mcp_connected_printed = False
 
 # Cheap model for classification — ~25x cheaper than Sonnet
 CLASSIFIER_MODEL = "claude-haiku-4-5-20251001"
@@ -60,20 +67,10 @@ def load_mcp_config() -> dict:
 
 
 def run(messages: list[dict], tracker: UsageTracker = None) -> list[dict]:
-    """
-    Sync entry point — used by main.py.
-    Bridges sync code into the async agent loop via asyncio.run().
-    """
     return asyncio.run(_run_async(messages, tracker or UsageTracker()))
 
 
 async def run_async(messages: list[dict], tracker: UsageTracker = None) -> list[dict]:
-    """
-    Async entry point — used by telegram_bot.py.
-    Called with await when already inside a running event loop.
-    asyncio.run() cannot be called from inside an event loop,
-    so Telegram needs this version instead.
-    """
     return await _run_async(messages, tracker or UsageTracker())
 
 
@@ -134,10 +131,12 @@ async def _connect_remote_servers(config: dict, stack):
             session = await stack.enter_async_context(ClientSession(read, write))
             await session.initialize()
             sessions.append((name, session))
-            print(f"  🌐 Connected: {name} ({server_type})")
+            if not _mcp_connected_printed:
+                print(f"  🌐 Connected: {name} ({server_type})")
 
         except Exception as e:
-            print(f"  ⚠️  Skipping '{name}': {e}")
+            if not _mcp_connected_printed:
+                print(f"  ⚠️  Skipping '{name}': {e}")
 
     return sessions
 
@@ -187,13 +186,16 @@ async def classify_servers(
 
         text = response.content[0].text.strip()
         text = text.replace("```json", "").replace("```", "").strip()
+        text = text.split('\n')[0].strip()  # take only the first line
         needed = json.loads(text)
         result = set(n for n in needed if n in connected)
-        print(f"  🎯 Servers needed: {result or {'local only'}}")
+        if not _mcp_connected_printed:
+            print(f"  🎯 Servers needed: {result or {'local only'}}")
         return result
 
     except Exception as e:
-        print(f"  ⚠️  Classifier failed ({e}) — using all servers")
+        if not _mcp_connected_printed:
+            print(f"  ⚠️  Classifier failed ({e}) — using all servers")
         return set(connected)
 
 
@@ -215,6 +217,7 @@ async def _run_async(messages: list[dict], tracker: UsageTracker) -> list[dict]:
             async with AsyncExitStack() as stack:
                 remote_sessions = await _connect_remote_servers(config, stack)
 
+                # Classify which servers are needed for this message
                 user_message = messages[-1].get("content", "") if messages else ""
                 needed_servers = await classify_servers(
                     user_message, remote_sessions, tracker
@@ -224,10 +227,12 @@ async def _run_async(messages: list[dict], tracker: UsageTracker) -> list[dict]:
                     all_tools = []
                     owner_map = {}
 
+                    # Always include local tools
                     t, m = await _collect_tools(local_session, prefix="local")
                     all_tools.extend(t)
                     owner_map.update(m)
 
+                    # Only include remote servers the classifier selected
                     for name, session in remote_sessions:
                         if name in needed_servers:
                             t, m = await _collect_tools(session, prefix=name)
@@ -292,10 +297,33 @@ async def _run_async(messages: list[dict], tracker: UsageTracker) -> list[dict]:
 
                         print_tool_result(result)
 
+                        # If result contains an image, format it for Claude's vision
+                        try:
+                            parsed = json.loads(result)
+                            if "image" in parsed and "error" not in parsed:
+                                content = [
+                                    {
+                                        "type": "image",
+                                        "source": {
+                                            "type": "base64",
+                                            "media_type": parsed["media_type"],
+                                            "data": parsed["image"]
+                                        }
+                                    },
+                                    {
+                                        "type": "text",
+                                        "text": f"Depth at center: {parsed['depth']}m. Image saved to {parsed.get('saved_to', '/tmp/last_capture.jpg')}"
+                                    }
+                                ]
+                            else:
+                                content = result
+                        except (json.JSONDecodeError, TypeError):
+                            content = result
+
                         tool_results.append({
                             "type":        "tool_result",
                             "tool_use_id": block.id,
-                            "content":     result,
+                            "content":     content,  # ← fixed: was result
                         })
 
                     messages.append({"role": "user", "content": tool_results})
@@ -332,6 +360,8 @@ async def _run_async(messages: list[dict], tracker: UsageTracker) -> list[dict]:
                 })
 
                 save_history(messages)
+                global _mcp_connected_printed
+                _mcp_connected_printed = True
                 return messages
 
 

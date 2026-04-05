@@ -125,11 +125,10 @@ def find_files(pattern: str, folder: str = "") -> str:
         base = safe_path(folder)
         matches = [str(f) for f in base.rglob(pattern)]
     else:
-        # Search ALL safe roots when no folder specified
         matches = []
         for root in SAFE_ROOTS:
             matches.extend([str(f) for f in root.rglob(pattern)])
-    
+
     if not matches:
         return f"No files matching '{pattern}' found."
     return f"Found {len(matches)} match(es):\n" + "\n".join(matches)
@@ -166,6 +165,29 @@ def git_diff(repo_path: str, staged: bool = False) -> str:
     )
     output = result.stdout or result.stderr
     return output if output.strip() else "No differences found."
+
+
+def capture_scene() -> str:
+    import urllib.request
+    import json
+    import base64
+    try:
+        with urllib.request.urlopen("http://192.168.0.133:8000/capture_scene", timeout=15) as r:
+            data = json.loads(r.read())
+
+        # Save to disk so it can be opened
+        img_path = "/tmp/last_capture.jpg"
+        with open(img_path, "wb") as f:
+            f.write(base64.b64decode(data["image"]))
+
+        return json.dumps({
+            "image": data["image"],
+            "depth": data["center_depth_m"],
+            "media_type": "image/jpeg",
+            "saved_to": img_path
+        })
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
 
 # ── Code Execution ─────────────────────────────────────────────────────────────
@@ -223,7 +245,6 @@ def execute_python(code: str, working_dir: str = "") -> str:
             )
 
     # ── Step 2: Determine working directory ───────────────
-    # Default to first SAFE_ROOT if none specified
     if working_dir:
         try:
             cwd = safe_path(working_dir)
@@ -233,9 +254,6 @@ def execute_python(code: str, working_dir: str = "") -> str:
         cwd = SAFE_ROOTS[0]
 
     # ── Step 3: Inject context into the code ──────────────
-    # Prepend SAFE_ROOTS so the code can reference allowed paths
-    # without hardcoding them. Claude's generated code can use
-    # SAFE_ROOTS[0] to find the workspace automatically.
     safe_roots_repr = repr([str(r) for r in SAFE_ROOTS])
     preamble = textwrap.dedent(f"""
         from pathlib import Path
@@ -251,7 +269,7 @@ def execute_python(code: str, working_dir: str = "") -> str:
             cwd=str(cwd),
             capture_output=True,
             text=True,
-            timeout=15,          # kill after 15 seconds
+            timeout=15,
         )
 
         output = ""
@@ -260,7 +278,6 @@ def execute_python(code: str, working_dir: str = "") -> str:
         if result.stderr:
             output += f"\n[stderr]\n{result.stderr}"
 
-        # Truncate very long outputs so they don't flood Claude's context
         if len(output) > 4000:
             output = output[:4000] + "\n\n[output truncated — too long]"
 

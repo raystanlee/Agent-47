@@ -2,7 +2,7 @@
 
 A personal AI agent that runs on your Mac, connects to your phone via Telegram, manages files, talks to GitHub, searches the web, reads Gmail, executes code, and extends itself by writing new tools on demand. Built from scratch to understand how agentic AI and the Model Context Protocol work at a fundamental level.
 
-> 🎬 *Demo GIF coming soon*
+![Agent 47 Demo](agent47_demo.gif)
 
 ## What it does
 
@@ -23,9 +23,9 @@ If it needs a capability it doesn't have yet, it writes the tool itself, registe
 | Interface | How to run | Use case |
 |---|---|---|
 | Terminal | `python main.py` | Development, debugging |
-| Telegram | `python telegram_bot.py` | Phone access, anywhere |
+| Telegram | runs automatically with `main.py` | Phone access, anywhere |
 
-Both share the same history, tools, and cost tracking.
+Both share the same history, tools, and cost tracking — one process, one session.
 
 ## Architecture
 
@@ -131,8 +131,7 @@ For Gmail, run `get_gmail_token.py` once for OAuth setup, then add the gmail ent
 
 **5. Run:**
 ```bash
-python main.py          # terminal
-python telegram_bot.py  # phone via Telegram
+python main.py  # runs both terminal and Telegram bot together
 ```
 
 ## Commands
@@ -156,8 +155,7 @@ python telegram_bot.py  # phone via Telegram
 
 ```
 Agent 47/
-├── main.py               # Terminal entry point
-├── telegram_bot.py       # Telegram bot entry point
+├── main.py               # Entry point — terminal + Telegram bot
 ├── config.py             # Settings and system prompt
 ├── mcp.json              # MCP server config (gitignored)
 ├── agent/
