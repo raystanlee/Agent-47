@@ -12,7 +12,8 @@
       "command": "npx",
       "args": ["-y", "@brave/brave-search-mcp-server"],
       "env": {
-        "BRAVE_API_KEY": "${BRAVE_API_KEY}"
+        "BRAVE_API_KEY": "${BRAVE_API_KEY}",
+        "NO_UPDATE_NOTIFIER": "1"
       }
     },
     "gmail": {

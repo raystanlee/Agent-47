@@ -15,6 +15,7 @@ You tell it what to do in plain English — from your terminal or your phone —
 - "Search the web for the latest AI research and summarise it"
 - "What are my most recent emails about?"
 - "Delete all files in the temp folder"
+- "What do you see in front of the camera?" ← captures live RGB + depth from the RealSense
 
 If it needs a capability it doesn't have yet, it writes the tool itself, registers it, and uses it — all in the same turn. Those tools are saved to disk and available on every future run.
 
@@ -199,6 +200,24 @@ Agent 47/
 
 Plus all tools from GitHub, Brave Search, and Gmail MCP servers.
 
+## Hardware
+
+Agent 47 has eyes. An **NVIDIA Jetson Orin Nano** sits on the local network running a FastAPI perception server, with an **Intel RealSense depth camera** attached. The agent can call `capture_scene` to get a live JPEG + centre depth reading from wherever the camera is pointed.
+
+```
+Mac (Agent 47)  ──HTTP──▶  Jetson Orin Nano (192.168.0.133:8000)
+                               │
+                               ▼
+                        Intel RealSense D-series
+                        RGB + depth at 640×480
+```
+
+The perception server (`perception_server.py`) runs on the Orin and keeps the RealSense pipeline open permanently — no per-request initialisation overhead. When the agent captures a scene via Telegram, the image is automatically sent back as a photo in the chat.
+
+| Tool | What it does |
+|---|---|
+| `capture_scene` | Captures RGB image + centre depth (metres) from the RealSense camera |
+
 ## Cost tracking
 
 Every session prints a breakdown on exit — API calls, input/output tokens, estimated cost, and most expensive turns. Pricing: Claude Sonnet 4.6 at $3/M input, $15/M output. The Haiku classifier runs at ~$0.001/M input — nearly free.
@@ -222,8 +241,6 @@ The biggest cost driver is tool schemas sent as input on every turn. The classif
 - [x] Token + cost tracking
 - [ ] Scheduled / proactive tasks - Pending
 - [ ] Voice interface - Pending
-- [ ] Hardware integration (NVIDIA Orin Nano + sensors)
+- [x] Hardware integration (NVIDIA Orin Nano + RealSense camera)
 
 ---
-
-*Committed by Agent 47*
