@@ -1,86 +1,118 @@
 # Agent 47 — My Personal AI Agent
 
-A personal AI agent that runs on your Mac, connects to your phone via Telegram, manages files, talks to GitHub, searches the web, reads Gmail, executes code, and extends itself by writing new tools on demand. Built from scratch to understand how agentic AI and the Model Context Protocol work at a fundamental level.
+A personal AI agent that started as a text-based assistant and is progressively gaining senses and physical presence. It runs on a Mac, connects via Telegram, and is being extended — step by step — with real hardware: a perception camera, a depth sensor, and now a robot arm that can pick up and place objects on command.
+
+Built from scratch to understand how agentic AI, the Model Context Protocol, and embodied robotics intersect.
 
 ![Agent 47 Demo](agent47_demo.gif)
 
-## What it does
+---
 
-You tell it what to do in plain English — from your terminal or your phone — and it figures out the steps:
+## The story so far
 
-- "Analyze the CSV in my workspace and show me the key trends"
-- "Read my README, check git diff, rewrite it, and push to GitHub"
-- "What is in this image?" ← writes a vision tool on the spot if needed
-- "Search GitHub for open issues in my repo"
-- "Search the web for the latest AI research and summarise it"
-- "What are my most recent emails about?"
-- "Delete all files in the temp folder"
-- "What do you see in front of the camera?" ← captures live RGB + depth from the RealSense
+**Stage 1 — Software agent.** Agent 47 started as a Claude-powered loop with MCP tool servers: file ops, GitHub, Brave Search, Gmail, and a self-extension mechanism that lets the agent write and register new tools at runtime. A Haiku-based intent classifier routes each turn to only the relevant tool servers, cutting input token cost by ~70%.
 
-If it needs a capability it doesn't have yet, it writes the tool itself, registers it, and uses it — all in the same turn. Those tools are saved to disk and available on every future run.
+**Stage 2 — Eyes.** An NVIDIA Jetson Orin Nano on the local network runs a FastAPI perception server with an Intel RealSense D435I. The agent can call `capture_scene` any time to get a live JPEG and centre-depth reading — from the terminal or from a Telegram message on a phone.
+
+**Stage 3 — Hands.** A SO-ARM101 robot arm, trained using imitation learning (Action Chunking Transformer), can pick up objects and drop them in a target bin. 24 teleoperated demonstrations, trained overnight on an M4 Pro with LeRobot. Evaluated at **5/5 successful pick-and-place runs**.
+
+<video src="so_arm_demo.MP4" autoplay loop muted width="640"></video>
+
+**Stage 4 (in progress) — Unified.** The trained policy gets wrapped as an `execute_manipulation` MCP tool — same pattern as `capture_scene` — so a single Telegram message can trigger: see workspace → move arm → confirm result → reply with before/after photos.
+
+---
+
+## What it can do right now
+
+```
+"Analyse the CSV in my workspace and show me the key trends"
+"Read my README, check git diff, rewrite it, and push to GitHub"
+"Search GitHub for open issues in my repo"
+"Search the web for the latest AI research and summarise it"
+"What are my most recent emails about?"
+"What do you see in front of the camera?"   ← live RealSense capture
+```
+
+If it needs a tool it doesn't have, it writes it, registers it, and uses it — all in the same turn. Those tools persist across restarts.
+
+---
 
 ## Interfaces
 
 | Interface | How to run | Use case |
 |---|---|---|
 | Terminal | `python main.py` | Development, debugging |
-| Telegram | runs automatically with `main.py` | Phone access, anywhere |
+| Telegram | starts with `main.py` | Phone access, anywhere |
 
 Both share the same history, tools, and cost tracking — one process, one session.
+
+---
 
 ## Architecture
 
 ```
-You (terminal or phone)
+You (terminal or Telegram)
         │
         ▼
-┌───────────────────┐
-│   Interface Layer  │
-│ main.py / Telegram │
-└────────┬──────────┘
-         │
-         ▼
-┌───────────────────────────────────────┐
-│           Agent Loop (loop.py)         │
-│                                        │
-│  1. Haiku classifier → which servers?  │
-│  2. Fetch only relevant tool schemas   │
-│  3. Claude plans → tools execute       │
-│  4. Track tokens + cost per turn       │
-└──┬──────────┬──────────┬──────────┬───┘
-   │          │          │          │
-   ▼          ▼          ▼          ▼
+┌─────────────────────┐
+│   Interface Layer    │
+│  main.py / Telegram  │
+└──────────┬──────────┘
+           │
+           ▼
+┌──────────────────────────────────────────┐
+│            Agent Loop                     │
+│                                           │
+│  1. Haiku classifier → which servers?    │
+│  2. Fetch only relevant tool schemas     │
+│  3. Claude plans → tools execute         │
+│  4. Track tokens + cost per turn         │
+└──┬──────────┬──────────┬────────────┬───┘
+   │          │          │            │
+   ▼          ▼          ▼            ▼
 Local MCP  GitHub MCP  Brave MCP  Gmail MCP
-(stdio)    (HTTP)      (stdio)    (stdio)
-file ops   repos       web search read/send
-git tools  issues      news       emails
-execute_py PRs         images
-dynamic    search
-tools
+file ops   repos       web search  read/send
+git tools  issues      images
+dynamic    PRs
+tools      search
+
+           + Hardware MCP (local network)
+           ┌─────────────────────────────┐
+           │  capture_scene              │
+           │  → Orin Nano → RealSense    │
+           │                             │
+           │  execute_manipulation (WIP) │
+           │  → ACT policy → SO-ARM101   │
+           └─────────────────────────────┘
 ```
 
 ### Intent-based tool routing
 
-Every turn, a cheap Haiku classifier decides which MCP servers are actually needed before the main Sonnet call. A simple "hi" only loads local tools (~20 schemas) instead of all servers (~85 schemas) — cutting input token cost by ~70% on focused tasks.
+Every turn, a cheap Haiku classifier decides which MCP servers are actually needed before the main Sonnet call. A simple "hi" only loads local tools (~20 schemas) instead of all servers (~85 schemas).
 
-```
-User message → Haiku classifier → ["github"] → load only github + local tools
-                                                → main Sonnet call (cheaper)
-```
-
-### The self-extension loop
+### Self-extension
 
 ```
 User asks for something
     ↓
-Agent checks available tools
-    ↓
 Tool missing? → create_tool → writes Python → registers live
     ↓
-Calls the new tool immediately
-    ↓
-Saved to disk — available forever
+Calls the new tool immediately — saved to disk, available forever
 ```
+
+---
+
+## Robot arm — how it was built
+
+The manipulation capability was built over two weeks:
+
+- **Hardware**: SO-ARM101 6-DOF arm (PartaBot kit), Waveshare BusLinker servo bus, 1080p top-down webcam
+- **Teleoperation**: leader-follower control via LeRobot at 60 Hz, with rerun.io visualiser
+- **Dataset**: 24 clean episodes of pick-and-place (`raystanlee/pick_object_drop_blue_bin`), ~750 frames each at 30 FPS
+- **Training**: ACT policy (ResNet-18 backbone, VAE encoder, chunk size 100), trained with MPS backend on M4 Pro overnight. Final L1 loss: 0.045
+- **Evaluation**: custom `robot/evaluate.py` (workaround for LeRobot issue #2597), 30 Hz control loop. Result: **5 / 5 episodes successful**
+
+---
 
 ## Setup
 
@@ -128,29 +160,14 @@ SAFE_ROOTS = [
 }
 ```
 
-For Gmail, run `get_gmail_token.py` once for OAuth setup, then add the gmail entry to `mcp.json`. Add any MCP server by dropping an entry — no code changes needed.
-
 **5. Run:**
 ```bash
-python main.py  # runs both terminal and Telegram bot together
+python main.py
 ```
 
-## Commands
+For robotics work, use the `lerobot` conda env and source `.env` before running anything in `robot/`.
 
-**Terminal:**
-| Command | What it does |
-|---|---|
-| `tools` | List all available tools |
-| `clear history` | Reset conversation memory |
-| `quit` | Exit and print cost summary |
-
-**Telegram:**
-| Command | What it does |
-|---|---|
-| `/start` | Show help |
-| `/clear` | Reset conversation memory |
-| `/cost` | Show session token usage and cost |
-| `/tools` | List available tools |
+---
 
 ## Project structure
 
@@ -158,9 +175,9 @@ python main.py  # runs both terminal and Telegram bot together
 Agent 47/
 ├── main.py               # Entry point — terminal + Telegram bot
 ├── config.py             # Settings and system prompt
-├── mcp.json              # MCP server config (gitignored)
+├── AGENTS.md             # Project instructions and conventions
 ├── agent/
-│   ├── loop.py           # Agentic loop + classifier + routing
+│   ├── loop.py           # Agentic loop + classifier + tool routing
 │   └── pretty.py         # Coloured terminal output
 ├── mcp_server/
 │   ├── server.py         # Local MCP server
@@ -170,11 +187,17 @@ Agent 47/
 │   ├── handlers.py       # Built-in tool implementations
 │   └── __init__.py       # Tool registry
 ├── safety/
-│   └── sandbox.py        # Path sandboxing across all safe roots
-└── memory/
-    ├── history.py         # Conversation persistence + auto-summarisation
-    └── usage.py           # Token and cost tracking
+│   └── sandbox.py        # Path sandboxing
+├── memory/
+│   ├── history.py        # Conversation persistence + auto-summarisation
+│   └── usage.py          # Token and cost tracking
+└── robot/
+    ├── CONTEXT.md        # Hardware details, dataset paths, gotchas
+    ├── evaluate.py       # ACT policy evaluation — runs N episodes on the arm
+    └── manipulation_tool.py  # MCP tool wrapping ACTPolicy (in progress)
 ```
+
+---
 
 ## Built-in tools
 
@@ -184,63 +207,37 @@ Agent 47/
 | `read_file` | Read a text file (capped at 8k chars) |
 | `write_file` | Write or create a file |
 | `delete_file` | Delete a file or folder |
-| `delete_folder_contents` | Empty a folder |
 | `create_folder` | Create nested folders |
-| `move_file` | Move a file or folder |
-| `rename_file` | Rename a file or folder |
+| `move_file` / `rename_file` | Move or rename |
 | `find_files` | Recursive glob search across all safe roots |
 | `open_file` | Open with macOS default app |
-| `git_status` | Run `git status` in a repo |
-| `git_diff` | Full diff (staged or unstaged) |
-| `git_diff_stat` | Compact diff summary |
+| `git_status` / `git_diff` | Git inspection |
 | `execute_python` | Run Python in a sandboxed subprocess |
 | `create_tool` | Write and register a new tool at runtime |
-| `list_dynamic_tools` | List agent-created tools |
-| `delete_tool` | Remove a dynamic tool |
+| `capture_scene` | Live JPEG + depth from RealSense on Orin Nano |
+| `execute_manipulation` | Run ACT policy on SO-ARM101 *(in progress)* |
 
 Plus all tools from GitHub, Brave Search, and Gmail MCP servers.
 
-## Hardware
-
-Agent 47 has eyes. An **NVIDIA Jetson Orin Nano** sits on the local network running a FastAPI perception server, with an **Intel RealSense depth camera** attached. The agent can call `capture_scene` to get a live JPEG + centre depth reading from wherever the camera is pointed.
-
-```
-Mac (Agent 47)  ──HTTP──▶  Jetson Orin Nano (192.168.0.133:8000)
-                               │
-                               ▼
-                        Intel RealSense D-series
-                        RGB + depth at 640×480
-```
-
-The perception server (`perception_server.py`) runs on the Orin and keeps the RealSense pipeline open permanently — no per-request initialisation overhead. When the agent captures a scene via Telegram, the image is automatically sent back as a photo in the chat.
-
-| Tool | What it does |
-|---|---|
-| `capture_scene` | Captures RGB image + centre depth (metres) from the RealSense camera |
+---
 
 ## Cost tracking
 
-Every session prints a breakdown on exit — API calls, input/output tokens, estimated cost, and most expensive turns. Pricing: Claude Sonnet 4.6 at $3/M input, $15/M output. The Haiku classifier runs at ~$0.001/M input — nearly free.
+Every session prints a breakdown on exit — API calls, tokens, estimated cost, most expensive turns. Pricing: Claude Sonnet 4.6 at $3/M input, $15/M output. The Haiku classifier runs at ~$0.001/M input — nearly free.
 
-The biggest cost driver is tool schemas sent as input on every turn. The classifier cuts this by only loading schemas for servers actually needed.
-
-## Notes
-
-- Agent can only access folders defined in `SAFE_ROOTS` — nothing outside them
-- History is summarised automatically when it gets too long to prevent rate limits
-- `mcp.json` is gitignored — keep secrets in `.env`, reference with `${VAR_NAME}`
-- Dynamic tools survive restarts — saved as `.py` + `.json` pairs in `dynamic_tools/`
+---
 
 ## Roadmap
 
 - [x] Local file management via MCP
 - [x] Multi-server MCP (GitHub, Brave, Gmail)
 - [x] Dynamic tool creation at runtime
-- [x] Intent-based tool routing (Haiku classifier)
+- [x] Intent-based tool routing — 70% token reduction
 - [x] Telegram bot — phone access
 - [x] Token + cost tracking
-- [ ] Scheduled / proactive tasks - Pending
-- [ ] Voice interface - Pending
-- [x] Hardware integration (NVIDIA Orin Nano + RealSense camera)
-
----
+- [x] Hardware perception — Orin Nano + RealSense (`capture_scene`)
+- [x] Robot arm — SO-ARM101 teleoperation, ACT training, 5/5 eval success
+- [ ] `execute_manipulation` MCP tool — arm as agent actuator
+- [ ] End-to-end demo: Telegram message → see → manipulate → reply with photos
+- [ ] Scheduled / proactive tasks
+- [ ] Voice interface

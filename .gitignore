@@ -4,9 +4,11 @@ memory/history.json
 __pycache__/
 *.pyc
 .DS_Store
+outputs/
 mcp_server/dynamic_tools/*.py
 mcp_server/dynamic_tools/*.json
-mcp.jsonclient_secret_google.json
+mcp.json
+client_secret_google.json
 client_secret.json
 get_gmail_token.py
 gmail_token.json
