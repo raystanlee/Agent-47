@@ -261,13 +261,19 @@ async def main_async():
             try:
                 await cli_loop()
             except (KeyboardInterrupt, asyncio.CancelledError):
-                pass
+                print("\n👋 Goodbye!")
             finally:
+                tracker.print_summary()
                 await tg_app.updater.stop()
                 await tg_app.stop()
     else:
         print("⚠️  No TELEGRAM_TOKEN/TELEGRAM_USER_ID set — running CLI only\n")
-        await cli_loop()
+        try:
+            await cli_loop()
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            print("\n👋 Goodbye!")
+        finally:
+            tracker.print_summary()
 
 
 def main():

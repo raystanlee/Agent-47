@@ -16,7 +16,7 @@ Built from scratch to understand how agentic AI, the Model Context Protocol, and
 
 **Stage 3 — Hands.** A SO-ARM101 robot arm, trained using imitation learning (Action Chunking Transformer), can pick up objects and drop them in a target bin. 24 teleoperated demonstrations, trained overnight on an M4 Pro with LeRobot. Evaluated at **5/5 successful pick-and-place runs**.
 
-<video src="so_arm_demo.MP4" autoplay loop muted width="640"></video>
+![SO-ARM101 pick-and-place demo](so_arm_demo.gif)
 
 **Stage 4 (in progress) — Unified.** The trained policy gets wrapped as an `execute_manipulation` MCP tool — same pattern as `capture_scene` — so a single Telegram message can trigger: see workspace → move arm → confirm result → reply with before/after photos.
 
