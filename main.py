@@ -19,12 +19,14 @@ from memory.history import load_history, clear_history, trim_history
 from memory.usage import UsageTracker
 from agent.loop import run_async
 from agent.pretty import print_user, print_separator
+from agent.trace import launch_trace_server
 from mcp_server.tool_store import list_saved_tool_names
 
 load_dotenv()
 
 TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_USER_ID = int(os.environ.get("TELEGRAM_USER_ID", "0"))
+TRACE_PORT       = int(os.environ.get("TRACE_PORT", "8770"))
 
 # ── Shared session state ──────────────────────────────────
 # Both CLI and Telegram read/write these.
@@ -227,6 +229,9 @@ async def main_async():
 
     ensure_workspace_exists()
     print(f"📂 Workspace: {SAFE_ROOTS}")
+
+    launch_trace_server(TRACE_PORT)
+    print(f"🔎 Trace UI: http://localhost:{TRACE_PORT}")
 
     msgs = load_history()
     if msgs:

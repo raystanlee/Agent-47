@@ -26,6 +26,7 @@ import asyncio
 import json
 import os
 import re
+import time
 from pathlib import Path
 
 import anthropic
@@ -34,6 +35,7 @@ from mcp.client.stdio import stdio_client, StdioServerParameters
 from mcp.client.streamable_http import streamablehttp_client
 
 from agent.pretty import print_claude, print_tool_call, print_tool_result
+from agent.trace import emit, start_turn, trim_result
 from memory.history import save_history
 from memory.usage import UsageTracker
 from config import MODEL, MAX_TOKENS, SYSTEM_PROMPT, API_KEY
@@ -162,6 +164,7 @@ async def classify_servers(
         return set()
 
     server_list = ", ".join(connected)
+    t0 = time.time()
 
     try:
         response = client.messages.create(
@@ -191,16 +194,21 @@ async def classify_servers(
         result = set(n for n in needed if n in connected)
         if not _mcp_connected_printed:
             print(f"  🎯 Servers needed: {result or {'local only'}}")
+        emit("routing", needed=sorted(result), available=connected,
+             model=CLASSIFIER_MODEL, ms=int((time.time() - t0) * 1000))
         return result
 
     except Exception as e:
         if not _mcp_connected_printed:
             print(f"  ⚠️  Classifier failed ({e}) — using all servers")
+        emit("routing", needed=connected, available=connected,
+             model=CLASSIFIER_MODEL, ms=int((time.time() - t0) * 1000), fallback=True)
         return set(connected)
 
 
 async def _run_async(messages: list[dict], tracker: UsageTracker) -> list[dict]:
 
+    start_turn()
     config = load_mcp_config()
 
     server_params = StdioServerParameters(
@@ -219,6 +227,8 @@ async def _run_async(messages: list[dict], tracker: UsageTracker) -> list[dict]:
 
                 # Classify which servers are needed for this message
                 user_message = messages[-1].get("content", "") if messages else ""
+                emit("user", text=user_message if isinstance(user_message, str)
+                     else "[non-text input]")
                 needed_servers = await classify_servers(
                     user_message, remote_sessions, tracker
                 )
@@ -260,12 +270,16 @@ async def _run_async(messages: list[dict], tracker: UsageTracker) -> list[dict]:
                     response.usage.output_tokens,
                     label=f"turn_{tracker.total_api_calls}"
                 )
+                emit("usage", input_tokens=response.usage.input_tokens,
+                     output_tokens=response.usage.output_tokens, cost=tracker.total_cost,
+                     total_tokens=tracker.total_input_tokens + tracker.total_output_tokens)
 
                 while response.stop_reason == "tool_use":
 
                     for block in response.content:
                         if hasattr(block, "text") and block.text:
                             print_claude(block.text)
+                            emit("claude", text=block.text, model=MODEL)
 
                     messages.append({
                         "role": "assistant",
@@ -278,7 +292,10 @@ async def _run_async(messages: list[dict], tracker: UsageTracker) -> list[dict]:
                             continue
 
                         print_tool_call(block.name, block.input)
+                        emit("tool_call", id=block.id, name=block.name,
+                             input=block.input)
 
+                        t0 = time.time()
                         owner = tool_owner.get(block.name)
                         if owner is None:
                             result = f"Unknown tool: {block.name}"
@@ -296,6 +313,10 @@ async def _run_async(messages: list[dict], tracker: UsageTracker) -> list[dict]:
                                 result = f"Error calling '{block.name}': {e}"
 
                         print_tool_result(result)
+                        emit("tool_result", id=block.id, name=block.name,
+                             result=trim_result(result),
+                             ms=int((time.time() - t0) * 1000),
+                             ok=not result.startswith(("Error calling", "Unknown tool")))
 
                         # If result contains an image, format it for Claude's vision
                         try:
@@ -349,10 +370,14 @@ async def _run_async(messages: list[dict], tracker: UsageTracker) -> list[dict]:
                         response.usage.output_tokens,
                         label=f"turn_{tracker.total_api_calls}"
                     )
+                    emit("usage", input_tokens=response.usage.input_tokens,
+                         output_tokens=response.usage.output_tokens, cost=tracker.total_cost,
+                     total_tokens=tracker.total_input_tokens + tracker.total_output_tokens)
 
                 for block in response.content:
                     if hasattr(block, "text") and block.text:
                         print_claude(block.text)
+                        emit("claude", text=block.text, model=MODEL)
 
                 messages.append({
                     "role": "assistant",
@@ -360,6 +385,8 @@ async def _run_async(messages: list[dict], tracker: UsageTracker) -> list[dict]:
                 })
 
                 save_history(messages)
+                emit("done", cost=tracker.total_cost,
+                     total_tokens=tracker.total_input_tokens + tracker.total_output_tokens)
                 global _mcp_connected_printed
                 _mcp_connected_printed = True
                 return messages
